@@ -80,25 +80,30 @@ jobs:
                   applicationId = "com.jackai.assistant"
                   minSdk = 23
                   targetSdk = 35
-                  versionCode = 2
-                  versionName = "1.1"
+                  versionCode = 3
+                  versionName = "1.2"
               }
           }
           EOF
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+
               <application
                   android:theme="@android:style/Theme.Material.NoActionBar"
                   android:label="JACK AI"
                   android:allowBackup="false">
+
                   <activity
                       android:name=".MainActivity"
                       android:exported="true">
+
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
+
                   </activity>
               </application>
           </manifest>
@@ -113,17 +118,29 @@ jobs:
           import android.graphics.Typeface;
           import android.view.Gravity;
           import android.view.View;
+          import android.view.inputmethod.EditorInfo;
           import android.widget.*;
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+          import java.io.*;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
 
           public class MainActivity extends Activity {
+
+              final String API_URL =
+                  "https://jack-ai-1.ai.studio/api/chat/stream";
+
+              final int BG = Color.rgb(8, 15, 35);
+              final int CYAN = Color.rgb(0, 220, 255);
+              final int WHITE = Color.WHITE;
 
               LinearLayout messages;
               EditText input;
               ScrollView scroll;
-
-              int white = Color.WHITE;
-              int cyan = Color.rgb(0, 220, 255);
-              int bg = Color.rgb(8, 15, 35);
+              Button send;
+              JSONArray history = new JSONArray();
+              boolean busy = false;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -131,23 +148,23 @@ jobs:
 
                   LinearLayout root = new LinearLayout(this);
                   root.setOrientation(LinearLayout.VERTICAL);
-                  root.setBackgroundColor(bg);
+                  root.setBackgroundColor(BG);
 
                   TextView header = new TextView(this);
                   header.setText("JACK AI");
-                  header.setTextColor(cyan);
+                  header.setTextColor(CYAN);
                   header.setTextSize(26);
                   header.setTypeface(null, Typeface.BOLD);
                   header.setGravity(Gravity.CENTER);
-                  header.setPadding(12, 22, 12, 18);
+                  header.setPadding(12, 22, 12, 16);
                   root.addView(header);
 
                   TextView welcome = new TextView(this);
                   welcome.setText("Ji boss! Kya kaam hai?");
-                  welcome.setTextColor(white);
+                  welcome.setTextColor(WHITE);
                   welcome.setTextSize(17);
                   welcome.setGravity(Gravity.CENTER);
-                  welcome.setPadding(10, 10, 10, 20);
+                  welcome.setPadding(10, 5, 10, 16);
                   root.addView(welcome);
 
                   scroll = new ScrollView(this);
@@ -156,9 +173,8 @@ jobs:
                   messages.setPadding(12, 12, 12, 12);
                   scroll.addView(messages);
 
-                  root.addView(scroll, new LinearLayout.LayoutParams(
-                      -1, 0, 1
-                  ));
+                  root.addView(scroll,
+                      new LinearLayout.LayoutParams(-1, 0, 1));
 
                   LinearLayout bottom = new LinearLayout(this);
                   bottom.setOrientation(LinearLayout.HORIZONTAL);
@@ -168,57 +184,201 @@ jobs:
                   input = new EditText(this);
                   input.setHint("Message JACK AI...");
                   input.setHintTextColor(Color.LTGRAY);
-                  input.setTextColor(white);
+                  input.setTextColor(WHITE);
                   input.setSingleLine(true);
+                  input.setImeOptions(EditorInfo.IME_ACTION_SEND);
                   input.setBackgroundTintList(
-                      android.content.res.ColorStateList.valueOf(cyan)
-                  );
+                      android.content.res.ColorStateList.valueOf(CYAN));
 
-                  bottom.addView(input, new LinearLayout.LayoutParams(
-                      0, -2, 1
-                  ));
+                  bottom.addView(input,
+                      new LinearLayout.LayoutParams(0, -2, 1));
 
-                  Button send = new Button(this);
+                  send = new Button(this);
                   send.setText("SEND");
-                  send.setTextColor(bg);
+                  send.setTextColor(BG);
                   send.setBackgroundTintList(
-                      android.content.res.ColorStateList.valueOf(cyan)
-                  );
-
+                      android.content.res.ColorStateList.valueOf(CYAN));
                   bottom.addView(send);
+
                   root.addView(bottom);
+                  setContentView(root);
 
                   send.setOnClickListener(v -> sendMessage());
+
                   input.setOnEditorActionListener((v, actionId, event) -> {
                       sendMessage();
                       return true;
                   });
 
-                  setContentView(root);
+                  addBubble("JACK AI: Main tumhari madad ke liye hazir hoon.",
+                      WHITE, Gravity.START);
               }
 
               void sendMessage() {
-                  String message = input.getText().toString().trim();
+                  String question = input.getText().toString().trim();
 
-                  if (message.isEmpty()) return;
+                  if (question.isEmpty() || busy) return;
 
-                  addBubble("You: " + message, cyan, Gravity.END);
+                  busy = true;
+                  send.setEnabled(false);
+
                   input.setText("");
+                  addBubble("You: " + question, CYAN, Gravity.END);
 
-                  addBubble(
-                      "JACK AI: Chat interface ready! AI connection will be added next.",
-                      white,
-                      Gravity.START
-                  );
+                  try {
+                      JSONObject userMessage = new JSONObject();
+                      userMessage.put("role", "user");
+                      userMessage.put("content", question);
+                      history.put(userMessage);
+
+                      JSONArray requestHistory =
+                          new JSONArray(history.toString());
+
+                      TextView reply = addBubble(
+                          "JACK AI: ", WHITE, Gravity.START);
+
+                      new Thread(() -> {
+                          StringBuilder answer = new StringBuilder();
+
+                          try {
+                              JSONObject body = new JSONObject();
+                              body.put("messages", requestHistory);
+                              body.put("replyLanguage", "auto");
+                              body.put("uiLanguage", "ur");
+                              body.put("thinkingDepth", "medium");
+                              body.put("smartMemoryEnabled", false);
+                              body.put("voiceMode", false);
+
+                              URL url = new URL(API_URL);
+                              HttpURLConnection connection =
+                                  (HttpURLConnection) url.openConnection();
+
+                              connection.setRequestMethod("POST");
+                              connection.setConnectTimeout(20000);
+                              connection.setReadTimeout(90000);
+                              connection.setDoOutput(true);
+                              connection.setRequestProperty(
+                                  "Content-Type", "application/json");
+                              connection.setRequestProperty(
+                                  "Accept", "text/event-stream");
+
+                              byte[] data =
+                                  body.toString().getBytes("UTF-8");
+
+                              try (OutputStream output =
+                                       connection.getOutputStream()) {
+                                  output.write(data);
+                              }
+
+                              int status = connection.getResponseCode();
+
+                              if (status != 200) {
+                                  InputStream errorStream =
+                                      connection.getErrorStream();
+
+                                  String errorText = "HTTP " + status;
+
+                                  if (errorStream != null) {
+                                      ByteArrayOutputStream buffer =
+                                          new ByteArrayOutputStream();
+                                      errorStream.transferTo(buffer);
+                                      errorText = buffer.toString("UTF-8");
+                                  }
+
+                                  throw new Exception(errorText);
+                              }
+
+                              try (BufferedReader reader =
+                                  new BufferedReader(new InputStreamReader(
+                                      connection.getInputStream(), "UTF-8"))) {
+
+                                  String line;
+                                  boolean completed = false;
+
+                                  while ((line = reader.readLine()) != null) {
+
+                                      if (!line.startsWith("data:")) continue;
+
+                                      String jsonText =
+                                          line.substring(5).trim();
+
+                                      if (jsonText.isEmpty()) continue;
+
+                                      JSONObject event =
+                                          new JSONObject(jsonText);
+
+                                      String type =
+                                          event.optString("type");
+
+                                      if ("delta".equals(type)) {
+                                          String part =
+                                              event.optString("text");
+
+                                          answer.append(part);
+
+                                          runOnUiThread(() ->
+                                              reply.setText(
+                                                  "JACK AI: " + answer));
+                                      }
+
+                                      if ("error".equals(type)) {
+                                          throw new Exception(
+                                              event.optString(
+                                                  "message",
+                                                  "AI response failed"));
+                                      }
+
+                                      if ("done".equals(type)) {
+                                          completed = true;
+                                      }
+                                  }
+
+                                  if (!completed || answer.length() == 0) {
+                                      throw new Exception(
+                                          "The AI response was incomplete.");
+                                  }
+                              }
+
+                              connection.disconnect();
+
+                              JSONObject assistantMessage =
+                                  new JSONObject();
+                              assistantMessage.put("role", "assistant");
+                              assistantMessage.put(
+                                  "content", answer.toString());
+
+                              history.put(assistantMessage);
+
+                          } catch (Exception e) {
+                              runOnUiThread(() -> reply.setText(
+                                  "JACK AI: Connection error: " +
+                                  e.getMessage()));
+                          }
+
+                          runOnUiThread(() -> {
+                              busy = false;
+                              send.setEnabled(true);
+                              input.requestFocus();
+                              scroll.post(() ->
+                                  scroll.fullScroll(View.FOCUS_DOWN));
+                          });
+
+                      }).start();
+
+                  } catch (Exception e) {
+                      busy = false;
+                      send.setEnabled(true);
+                      addBubble("Error: " + e.getMessage(),
+                          WHITE, Gravity.START);
+                  }
               }
 
-              void addBubble(String text, int color, int gravity) {
+              TextView addBubble(String text, int color, int gravity) {
                   TextView bubble = new TextView(this);
                   bubble.setText(text);
                   bubble.setTextColor(color);
                   bubble.setTextSize(16);
                   bubble.setPadding(14, 12, 14, 12);
-                  bubble.setGravity(Gravity.START);
 
                   LinearLayout.LayoutParams params =
                       new LinearLayout.LayoutParams(-2, -2);
@@ -227,7 +387,11 @@ jobs:
                   params.setMargins(4, 8, 4, 8);
 
                   messages.addView(bubble, params);
-                  scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+
+                  scroll.post(() ->
+                      scroll.fullScroll(View.FOCUS_DOWN));
+
+                  return bubble;
               }
           }
           EOF
