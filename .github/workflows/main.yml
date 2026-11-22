@@ -80,8 +80,8 @@ jobs:
                   applicationId = "com.jackai.assistant"
                   minSdk = 23
                   targetSdk = 35
-                  versionCode = 4
-                  versionName = "1.3"
+                  versionCode = 5
+                  versionName = "1.4"
               }
           }
           EOF
@@ -123,6 +123,8 @@ jobs:
           import android.Manifest;
           import android.app.Activity;
           import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Looper;
           import android.content.Intent;
           import android.content.pm.PackageManager;
           import android.graphics.Color;
@@ -154,15 +156,19 @@ jobs:
               LinearLayout messages;
               EditText input;
               ScrollView scroll;
-              Button send, mic, languageButton;
+              Button send, mic, languageButton, wakeButton;
 
               JSONArray history = new JSONArray();
+
               boolean busy = false;
               boolean english = false;
+              boolean wakeWordActive = false;
 
               SpeechRecognizer recognizer;
               TextToSpeech tts;
               boolean ttsReady = false;
+
+              Handler handler = new Handler(Looper.getMainLooper());
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -190,18 +196,19 @@ jobs:
                   root.addView(welcome);
 
                   scroll = new ScrollView(this);
+
                   messages = new LinearLayout(this);
                   messages.setOrientation(LinearLayout.VERTICAL);
                   messages.setPadding(12, 12, 12, 12);
-                  scroll.addView(messages);
 
+                  scroll.addView(messages);
                   root.addView(scroll,
                       new LinearLayout.LayoutParams(-1, 0, 1));
 
                   LinearLayout bottom = new LinearLayout(this);
                   bottom.setOrientation(LinearLayout.HORIZONTAL);
                   bottom.setGravity(Gravity.CENTER_VERTICAL);
-                  bottom.setPadding(5, 8, 5, 12);
+                  bottom.setPadding(3, 8, 3, 12);
 
                   input = new EditText(this);
                   input.setHint("Message JACK AI...");
@@ -217,33 +224,44 @@ jobs:
 
                   languageButton = new Button(this);
                   languageButton.setText("UR");
-                  languageButton.setTextSize(12);
+                  languageButton.setTextSize(10);
                   bottom.addView(languageButton);
 
                   mic = new Button(this);
                   mic.setText("MIC");
-                  mic.setTextSize(12);
+                  mic.setTextSize(10);
                   bottom.addView(mic);
 
                   send = new Button(this);
                   send.setText("SEND");
-                  send.setTextSize(12);
+                  send.setTextSize(10);
                   bottom.addView(send);
 
                   root.addView(bottom);
+
+                  wakeButton = new Button(this);
+                  wakeButton.setText("WAKE WORD: OFF");
+                  wakeButton.setTextSize(13);
+                  wakeButton.setTextColor(WHITE);
+                  root.addView(wakeButton);
+
                   setContentView(root);
 
                   languageButton.setOnClickListener(v -> {
                       english = !english;
                       languageButton.setText(english ? "EN" : "UR");
                       setTtsLanguage();
+
                       Toast.makeText(this,
                           english ? "English selected" : "Urdu selected",
                           Toast.LENGTH_SHORT).show();
                   });
 
                   mic.setOnClickListener(v -> startVoiceInput());
+
                   send.setOnClickListener(v -> sendMessage());
+
+                  wakeButton.setOnClickListener(v -> toggleWakeWord());
 
                   input.setOnEditorActionListener((v, actionId, event) -> {
                       sendMessage();
@@ -284,21 +302,69 @@ jobs:
 
               void speak(String text) {
                   if (tts != null && ttsReady && !text.isEmpty()) {
-                      tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "JACK_REPLY");
+                      tts.speak(text, TextToSpeech.QUEUE_FLUSH,
+                          null, "JACK_REPLY");
                   }
               }
 
-              void startVoiceInput() {
+              void toggleWakeWord() {
+                  if (wakeWordActive) {
+                      stopWakeWord();
+
+                      Toast.makeText(this,
+                          "Wake Word OFF",
+                          Toast.LENGTH_SHORT).show();
+
+                      return;
+                  }
+
                   if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                       != PackageManager.PERMISSION_GRANTED) {
 
                       requestPermissions(
                           new String[]{Manifest.permission.RECORD_AUDIO},
                           101);
+
                       return;
                   }
 
-                  beginListening();
+                  startWakeWord();
+              }
+
+              void startWakeWord() {
+                  wakeWordActive = true;
+                  wakeButton.setText("WAKE WORD: ON");
+                  mic.setText("WAKE...");
+
+                  Toast.makeText(this,
+                      "JACK is listening for Hey JACK",
+                      Toast.LENGTH_LONG).show();
+
+                  beginListening(true);
+              }
+
+              void stopWakeWord() {
+                  wakeWordActive = false;
+                  wakeButton.setText("WAKE WORD: OFF");
+                  mic.setText("MIC");
+
+                  if (recognizer != null) {
+                      recognizer.cancel();
+                      recognizer.destroy();
+                      recognizer = null;
+                  }
+
+                  handler.removeCallbacksAndMessages(null);
+              }
+
+              void restartWakeWord() {
+                  if (!wakeWordActive || isFinishing()) return;
+
+                  handler.postDelayed(() -> {
+                      if (wakeWordActive && !isFinishing()) {
+                          beginListening(true);
+                      }
+                  }, 700);
               }
 
               @Override
@@ -313,28 +379,53 @@ jobs:
                   if (requestCode == 101 &&
                       grantResults.length > 0 &&
                       grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                      beginListening();
+
+                      startWakeWord();
+
                   } else if (requestCode == 101) {
+
                       Toast.makeText(this,
                           "Microphone permission is required.",
                           Toast.LENGTH_LONG).show();
                   }
               }
 
-              void beginListening() {
+              void startVoiceInput() {
+                  if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                      != PackageManager.PERMISSION_GRANTED) {
+
+                      requestPermissions(
+                          new String[]{Manifest.permission.RECORD_AUDIO},
+                          101);
+
+                      return;
+                  }
+
+                  if (wakeWordActive) {
+                      stopWakeWord();
+                  }
+
+                  beginListening(false);
+              }
+
+              void beginListening(boolean wakeSession) {
                   if (!SpeechRecognizer.isRecognitionAvailable(this)) {
                       Toast.makeText(this,
-                          "Speech recognition is not available on this device.",
+                          "Speech recognition is not available.",
                           Toast.LENGTH_LONG).show();
+
+                      if (wakeSession) stopWakeWord();
                       return;
                   }
 
                   try {
                       if (recognizer != null) {
+                          recognizer.cancel();
                           recognizer.destroy();
                       }
 
-                      recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+                      recognizer =
+                          SpeechRecognizer.createSpeechRecognizer(this);
 
                       recognizer.setRecognitionListener(
                           new RecognitionListener() {
@@ -342,7 +433,7 @@ jobs:
                           @Override
                           public void onReadyForSpeech(Bundle params) {
                               runOnUiThread(() ->
-                                  mic.setText("LISTENING"));
+                                  mic.setText(wakeSession ? "WAKE..." : "LISTENING"));
                           }
 
                           @Override
@@ -356,32 +447,82 @@ jobs:
 
                           @Override
                           public void onEndOfSpeech() {
-                              runOnUiThread(() -> mic.setText("MIC"));
+                              runOnUiThread(() -> {
+                                  if (!wakeWordActive) {
+                                      mic.setText("MIC");
+                                  }
+                              });
                           }
 
                           @Override
                           public void onError(int error) {
                               runOnUiThread(() -> {
-                                  mic.setText("MIC");
-                                  Toast.makeText(MainActivity.this,
-                                      "Voice not recognized. Please try again.",
-                                      Toast.LENGTH_SHORT).show();
+                                  if (wakeSession && wakeWordActive) {
+                                      restartWakeWord();
+                                  } else {
+                                      mic.setText("MIC");
+
+                                      Toast.makeText(MainActivity.this,
+                                          "Voice not recognized. Please try again.",
+                                          Toast.LENGTH_SHORT).show();
+                                  }
                               });
                           }
 
                           @Override
                           public void onResults(Bundle results) {
                               runOnUiThread(() -> {
-                                  mic.setText("MIC");
-
-                                  if (results == null) return;
+                                  if (results == null) {
+                                      if (wakeSession) restartWakeWord();
+                                      return;
+                                  }
 
                                   java.util.ArrayList<String> matches =
                                       results.getStringArrayList(
                                           SpeechRecognizer.RESULTS_RECOGNITION);
 
-                                  if (matches != null && !matches.isEmpty()) {
-                                      input.setText(matches.get(0));
+                                  if (matches == null || matches.isEmpty()) {
+                                      if (wakeSession) restartWakeWord();
+                                      return;
+                                  }
+
+                                  String spoken = matches.get(0);
+
+                                  if (wakeSession) {
+                                      String normalized = spoken
+                                          .toLowerCase(Locale.ROOT)
+                                          .replaceAll("[^a-z ]", " ")
+                                          .replaceAll("\\s+", " ")
+                                          .trim();
+
+                                      boolean detected =
+                                          normalized.contains("hey jack") ||
+                                          normalized.contains("heyjack");
+
+                                      if (detected) {
+                                          wakeWordActive = false;
+                                          wakeButton.setText("WAKE WORD: OFF");
+                                          mic.setText("MIC");
+
+                                          speak("Ji boss! Kya kaam hai?");
+
+                                          Toast.makeText(MainActivity.this,
+                                              "Hey JACK detected! Now speak your command.",
+                                              Toast.LENGTH_LONG).show();
+
+                                          handler.postDelayed(() -> {
+                                              if (!isFinishing()) {
+                                                  beginListening(false);
+                                              }
+                                          }, 2200);
+
+                                      } else {
+                                          restartWakeWord();
+                                      }
+
+                                  } else {
+                                      mic.setText("MIC");
+                                      input.setText(spoken);
                                       sendMessage();
                                   }
                               });
@@ -416,6 +557,11 @@ jobs:
 
                   } catch (Exception e) {
                       mic.setText("MIC");
+
+                      if (wakeSession) {
+                          stopWakeWord();
+                      }
+
                       Toast.makeText(this,
                           "Could not start microphone.",
                           Toast.LENGTH_SHORT).show();
@@ -624,7 +770,18 @@ jobs:
               }
 
               @Override
+              protected void onPause() {
+                  super.onPause();
+
+                  if (wakeWordActive) {
+                      stopWakeWord();
+                  }
+              }
+
+              @Override
               protected void onDestroy() {
+                  handler.removeCallbacksAndMessages(null);
+
                   if (recognizer != null) {
                       recognizer.destroy();
                       recognizer = null;
