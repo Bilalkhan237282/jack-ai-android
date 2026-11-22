@@ -80,8 +80,8 @@ jobs:
                   applicationId = "com.jackai.assistant"
                   minSdk = 23
                   targetSdk = 35
-                  versionCode = 1
-                  versionName = "1.0"
+                  versionCode = 2
+                  versionName = "1.1"
               }
           }
           EOF
@@ -92,16 +92,13 @@ jobs:
                   android:theme="@android:style/Theme.Material.NoActionBar"
                   android:label="JACK AI"
                   android:allowBackup="false">
-
                   <activity
                       android:name=".MainActivity"
                       android:exported="true">
-
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
-
                   </activity>
               </application>
           </manifest>
@@ -113,36 +110,124 @@ jobs:
           import android.app.Activity;
           import android.os.Bundle;
           import android.graphics.Color;
+          import android.graphics.Typeface;
           import android.view.Gravity;
-          import android.widget.TextView;
-          import android.widget.LinearLayout;
+          import android.view.View;
+          import android.widget.*;
 
           public class MainActivity extends Activity {
+
+              LinearLayout messages;
+              EditText input;
+              ScrollView scroll;
+
+              int white = Color.WHITE;
+              int cyan = Color.rgb(0, 220, 255);
+              int bg = Color.rgb(8, 15, 35);
+
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
 
-                  LinearLayout layout = new LinearLayout(this);
-                  layout.setOrientation(LinearLayout.VERTICAL);
-                  layout.setGravity(Gravity.CENTER);
-                  layout.setBackgroundColor(Color.rgb(8, 15, 35));
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setBackgroundColor(bg);
 
-                  TextView title = new TextView(this);
-                  title.setText("JACK AI");
-                  title.setTextColor(Color.WHITE);
-                  title.setTextSize(34);
-                  title.setGravity(Gravity.CENTER);
+                  TextView header = new TextView(this);
+                  header.setText("JACK AI");
+                  header.setTextColor(cyan);
+                  header.setTextSize(26);
+                  header.setTypeface(null, Typeface.BOLD);
+                  header.setGravity(Gravity.CENTER);
+                  header.setPadding(12, 22, 12, 18);
+                  root.addView(header);
 
-                  TextView subtitle = new TextView(this);
-                  subtitle.setText("Ji boss! Kya kaam hai?");
-                  subtitle.setTextColor(Color.CYAN);
-                  subtitle.setTextSize(20);
-                  subtitle.setGravity(Gravity.CENTER);
+                  TextView welcome = new TextView(this);
+                  welcome.setText("Ji boss! Kya kaam hai?");
+                  welcome.setTextColor(white);
+                  welcome.setTextSize(17);
+                  welcome.setGravity(Gravity.CENTER);
+                  welcome.setPadding(10, 10, 10, 20);
+                  root.addView(welcome);
 
-                  layout.addView(title);
-                  layout.addView(subtitle);
+                  scroll = new ScrollView(this);
+                  messages = new LinearLayout(this);
+                  messages.setOrientation(LinearLayout.VERTICAL);
+                  messages.setPadding(12, 12, 12, 12);
+                  scroll.addView(messages);
 
-                  setContentView(layout);
+                  root.addView(scroll, new LinearLayout.LayoutParams(
+                      -1, 0, 1
+                  ));
+
+                  LinearLayout bottom = new LinearLayout(this);
+                  bottom.setOrientation(LinearLayout.HORIZONTAL);
+                  bottom.setGravity(Gravity.CENTER_VERTICAL);
+                  bottom.setPadding(8, 8, 8, 12);
+
+                  input = new EditText(this);
+                  input.setHint("Message JACK AI...");
+                  input.setHintTextColor(Color.LTGRAY);
+                  input.setTextColor(white);
+                  input.setSingleLine(true);
+                  input.setBackgroundTintList(
+                      android.content.res.ColorStateList.valueOf(cyan)
+                  );
+
+                  bottom.addView(input, new LinearLayout.LayoutParams(
+                      0, -2, 1
+                  ));
+
+                  Button send = new Button(this);
+                  send.setText("SEND");
+                  send.setTextColor(bg);
+                  send.setBackgroundTintList(
+                      android.content.res.ColorStateList.valueOf(cyan)
+                  );
+
+                  bottom.addView(send);
+                  root.addView(bottom);
+
+                  send.setOnClickListener(v -> sendMessage());
+                  input.setOnEditorActionListener((v, actionId, event) -> {
+                      sendMessage();
+                      return true;
+                  });
+
+                  setContentView(root);
+              }
+
+              void sendMessage() {
+                  String message = input.getText().toString().trim();
+
+                  if (message.isEmpty()) return;
+
+                  addBubble("You: " + message, cyan, Gravity.END);
+                  input.setText("");
+
+                  addBubble(
+                      "JACK AI: Chat interface ready! AI connection will be added next.",
+                      white,
+                      Gravity.START
+                  );
+              }
+
+              void addBubble(String text, int color, int gravity) {
+                  TextView bubble = new TextView(this);
+                  bubble.setText(text);
+                  bubble.setTextColor(color);
+                  bubble.setTextSize(16);
+                  bubble.setPadding(14, 12, 14, 12);
+                  bubble.setGravity(Gravity.START);
+
+                  LinearLayout.LayoutParams params =
+                      new LinearLayout.LayoutParams(-2, -2);
+
+                  params.gravity = gravity;
+                  params.setMargins(4, 8, 4, 8);
+
+                  messages.addView(bubble, params);
+                  scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
               }
           }
           EOF
@@ -155,4 +240,3 @@ jobs:
         with:
           name: JACK-AI-APK
           path: app/build/outputs/apk/debug/app-debug.apk
-
