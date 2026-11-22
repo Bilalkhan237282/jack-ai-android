@@ -80,15 +80,23 @@ jobs:
                   applicationId = "com.jackai.assistant"
                   minSdk = 23
                   targetSdk = 35
-                  versionCode = 3
-                  versionName = "1.2"
+                  versionCode = 4
+                  versionName = "1.3"
               }
           }
           EOF
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
               <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+
+              <queries>
+                  <intent>
+                      <action android:name="android.speech.RecognitionService"/>
+                  </intent>
+              </queries>
 
               <application
                   android:theme="@android:style/Theme.Material.NoActionBar"
@@ -112,10 +120,17 @@ jobs:
           cat > app/src/main/java/com/jackai/assistant/MainActivity.java <<'EOF'
           package com.jackai.assistant;
 
+          import android.Manifest;
           import android.app.Activity;
           import android.os.Bundle;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
           import android.graphics.Color;
           import android.graphics.Typeface;
+          import android.speech.RecognizerIntent;
+          import android.speech.RecognitionListener;
+          import android.speech.SpeechRecognizer;
+          import android.speech.tts.TextToSpeech;
           import android.view.Gravity;
           import android.view.View;
           import android.view.inputmethod.EditorInfo;
@@ -125,6 +140,7 @@ jobs:
           import java.io.*;
           import java.net.HttpURLConnection;
           import java.net.URL;
+          import java.util.Locale;
 
           public class MainActivity extends Activity {
 
@@ -138,9 +154,15 @@ jobs:
               LinearLayout messages;
               EditText input;
               ScrollView scroll;
-              Button send;
+              Button send, mic, languageButton;
+
               JSONArray history = new JSONArray();
               boolean busy = false;
+              boolean english = false;
+
+              SpeechRecognizer recognizer;
+              TextToSpeech tts;
+              boolean ttsReady = false;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -153,7 +175,7 @@ jobs:
                   TextView header = new TextView(this);
                   header.setText("JACK AI");
                   header.setTextColor(CYAN);
-                  header.setTextSize(26);
+                  header.setTextSize(27);
                   header.setTypeface(null, Typeface.BOLD);
                   header.setGravity(Gravity.CENTER);
                   header.setPadding(12, 22, 12, 16);
@@ -179,7 +201,7 @@ jobs:
                   LinearLayout bottom = new LinearLayout(this);
                   bottom.setOrientation(LinearLayout.HORIZONTAL);
                   bottom.setGravity(Gravity.CENTER_VERTICAL);
-                  bottom.setPadding(8, 8, 8, 12);
+                  bottom.setPadding(5, 8, 5, 12);
 
                   input = new EditText(this);
                   input.setHint("Message JACK AI...");
@@ -193,16 +215,34 @@ jobs:
                   bottom.addView(input,
                       new LinearLayout.LayoutParams(0, -2, 1));
 
+                  languageButton = new Button(this);
+                  languageButton.setText("UR");
+                  languageButton.setTextSize(12);
+                  bottom.addView(languageButton);
+
+                  mic = new Button(this);
+                  mic.setText("MIC");
+                  mic.setTextSize(12);
+                  bottom.addView(mic);
+
                   send = new Button(this);
                   send.setText("SEND");
-                  send.setTextColor(BG);
-                  send.setBackgroundTintList(
-                      android.content.res.ColorStateList.valueOf(CYAN));
+                  send.setTextSize(12);
                   bottom.addView(send);
 
                   root.addView(bottom);
                   setContentView(root);
 
+                  languageButton.setOnClickListener(v -> {
+                      english = !english;
+                      languageButton.setText(english ? "EN" : "UR");
+                      setTtsLanguage();
+                      Toast.makeText(this,
+                          english ? "English selected" : "Urdu selected",
+                          Toast.LENGTH_SHORT).show();
+                  });
+
+                  mic.setOnClickListener(v -> startVoiceInput());
                   send.setOnClickListener(v -> sendMessage());
 
                   input.setOnEditorActionListener((v, actionId, event) -> {
@@ -210,8 +250,176 @@ jobs:
                       return true;
                   });
 
-                  addBubble("JACK AI: Main tumhari madad ke liye hazir hoon.",
+                  tts = new TextToSpeech(this, status -> {
+                      if (status == TextToSpeech.SUCCESS) {
+                          ttsReady = true;
+                          setTtsLanguage();
+                      }
+                  });
+
+                  addBubble(
+                      "JACK AI: Main tumhari madad ke liye hazir hoon.",
                       WHITE, Gravity.START);
+              }
+
+              void setTtsLanguage() {
+                  if (tts == null || !ttsReady) return;
+
+                  Locale locale = english
+                      ? Locale.US
+                      : new Locale("ur", "PK");
+
+                  int result = tts.setLanguage(locale);
+
+                  if (result == TextToSpeech.LANG_MISSING_DATA ||
+                      result == TextToSpeech.LANG_NOT_SUPPORTED) {
+
+                      tts.setLanguage(Locale.US);
+
+                      Toast.makeText(this,
+                          "Selected voice unavailable. Using device fallback.",
+                          Toast.LENGTH_LONG).show();
+                  }
+              }
+
+              void speak(String text) {
+                  if (tts != null && ttsReady && !text.isEmpty()) {
+                      tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "JACK_REPLY");
+                  }
+              }
+
+              void startVoiceInput() {
+                  if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                      != PackageManager.PERMISSION_GRANTED) {
+
+                      requestPermissions(
+                          new String[]{Manifest.permission.RECORD_AUDIO},
+                          101);
+                      return;
+                  }
+
+                  beginListening();
+              }
+
+              @Override
+              public void onRequestPermissionsResult(
+                  int requestCode,
+                  String[] permissions,
+                  int[] grantResults) {
+
+                  super.onRequestPermissionsResult(
+                      requestCode, permissions, grantResults);
+
+                  if (requestCode == 101 &&
+                      grantResults.length > 0 &&
+                      grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                      beginListening();
+                  } else if (requestCode == 101) {
+                      Toast.makeText(this,
+                          "Microphone permission is required.",
+                          Toast.LENGTH_LONG).show();
+                  }
+              }
+
+              void beginListening() {
+                  if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+                      Toast.makeText(this,
+                          "Speech recognition is not available on this device.",
+                          Toast.LENGTH_LONG).show();
+                      return;
+                  }
+
+                  try {
+                      if (recognizer != null) {
+                          recognizer.destroy();
+                      }
+
+                      recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+
+                      recognizer.setRecognitionListener(
+                          new RecognitionListener() {
+
+                          @Override
+                          public void onReadyForSpeech(Bundle params) {
+                              runOnUiThread(() ->
+                                  mic.setText("LISTENING"));
+                          }
+
+                          @Override
+                          public void onBeginningOfSpeech() {}
+
+                          @Override
+                          public void onRmsChanged(float rmsdB) {}
+
+                          @Override
+                          public void onBufferReceived(byte[] buffer) {}
+
+                          @Override
+                          public void onEndOfSpeech() {
+                              runOnUiThread(() -> mic.setText("MIC"));
+                          }
+
+                          @Override
+                          public void onError(int error) {
+                              runOnUiThread(() -> {
+                                  mic.setText("MIC");
+                                  Toast.makeText(MainActivity.this,
+                                      "Voice not recognized. Please try again.",
+                                      Toast.LENGTH_SHORT).show();
+                              });
+                          }
+
+                          @Override
+                          public void onResults(Bundle results) {
+                              runOnUiThread(() -> {
+                                  mic.setText("MIC");
+
+                                  if (results == null) return;
+
+                                  java.util.ArrayList<String> matches =
+                                      results.getStringArrayList(
+                                          SpeechRecognizer.RESULTS_RECOGNITION);
+
+                                  if (matches != null && !matches.isEmpty()) {
+                                      input.setText(matches.get(0));
+                                      sendMessage();
+                                  }
+                              });
+                          }
+
+                          @Override
+                          public void onPartialResults(Bundle results) {}
+
+                          @Override
+                          public void onEvent(int eventType, Bundle params) {}
+                      });
+
+                      Intent intent =
+                          new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+
+                      intent.putExtra(
+                          RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                          RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+
+                      intent.putExtra(
+                          RecognizerIntent.EXTRA_LANGUAGE,
+                          english ? "en-US" : "ur-PK");
+
+                      intent.putExtra(
+                          RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE,
+                          english ? "en-US" : "ur-PK");
+
+                      intent.putExtra(
+                          RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+
+                      recognizer.startListening(intent);
+
+                  } catch (Exception e) {
+                      mic.setText("MIC");
+                      Toast.makeText(this,
+                          "Could not start microphone.",
+                          Toast.LENGTH_SHORT).show();
+                  }
               }
 
               void sendMessage() {
@@ -239,24 +447,28 @@ jobs:
 
                       new Thread(() -> {
                           StringBuilder answer = new StringBuilder();
+                          HttpURLConnection connection = null;
 
                           try {
                               JSONObject body = new JSONObject();
                               body.put("messages", requestHistory);
                               body.put("replyLanguage", "auto");
-                              body.put("uiLanguage", "ur");
+                              body.put("uiLanguage", english ? "en" : "ur");
                               body.put("thinkingDepth", "medium");
                               body.put("smartMemoryEnabled", false);
-                              body.put("voiceMode", false);
+                              body.put("voiceMode", true);
+                              body.put("voiceSpeechLanguage",
+                                  english ? "en" : "ur");
 
                               URL url = new URL(API_URL);
-                              HttpURLConnection connection =
+                              connection =
                                   (HttpURLConnection) url.openConnection();
 
                               connection.setRequestMethod("POST");
                               connection.setConnectTimeout(20000);
                               connection.setReadTimeout(90000);
                               connection.setDoOutput(true);
+
                               connection.setRequestProperty(
                                   "Content-Type", "application/json");
                               connection.setRequestProperty(
@@ -266,7 +478,7 @@ jobs:
                                   body.toString().getBytes("UTF-8");
 
                               try (OutputStream output =
-                                       connection.getOutputStream()) {
+                                  connection.getOutputStream()) {
                                   output.write(data);
                               }
 
@@ -276,16 +488,24 @@ jobs:
                                   InputStream errorStream =
                                       connection.getErrorStream();
 
-                                  String errorText = "HTTP " + status;
+                                  StringBuilder errorText =
+                                      new StringBuilder("HTTP " + status);
 
                                   if (errorStream != null) {
-                                      ByteArrayOutputStream buffer =
-                                          new ByteArrayOutputStream();
-                                      errorStream.transferTo(buffer);
-                                      errorText = buffer.toString("UTF-8");
+                                      BufferedReader errorReader =
+                                          new BufferedReader(
+                                              new InputStreamReader(
+                                                  errorStream, "UTF-8"));
+
+                                      String errorLine;
+
+                                      while ((errorLine =
+                                          errorReader.readLine()) != null) {
+                                          errorText.append(errorLine);
+                                      }
                                   }
 
-                                  throw new Exception(errorText);
+                                  throw new Exception(errorText.toString());
                               }
 
                               try (BufferedReader reader =
@@ -296,7 +516,6 @@ jobs:
                                   boolean completed = false;
 
                                   while ((line = reader.readLine()) != null) {
-
                                       if (!line.startsWith("data:")) continue;
 
                                       String jsonText =
@@ -311,21 +530,19 @@ jobs:
                                           event.optString("type");
 
                                       if ("delta".equals(type)) {
-                                          String part =
-                                              event.optString("text");
+                                          answer.append(
+                                              event.optString("text"));
 
-                                          answer.append(part);
+                                          String current = answer.toString();
 
                                           runOnUiThread(() ->
-                                              reply.setText(
-                                                  "JACK AI: " + answer));
+                                              reply.setText("JACK AI: " + current));
                                       }
 
                                       if ("error".equals(type)) {
                                           throw new Exception(
                                               event.optString(
-                                                  "message",
-                                                  "AI response failed"));
+                                                  "message", "AI response failed"));
                                       }
 
                                       if ("done".equals(type)) {
@@ -335,39 +552,51 @@ jobs:
 
                                   if (!completed || answer.length() == 0) {
                                       throw new Exception(
-                                          "The AI response was incomplete.");
+                                          "AI response was incomplete.");
                                   }
                               }
 
-                              connection.disconnect();
-
                               JSONObject assistantMessage =
                                   new JSONObject();
+
                               assistantMessage.put("role", "assistant");
                               assistantMessage.put(
                                   "content", answer.toString());
 
                               history.put(assistantMessage);
 
-                          } catch (Exception e) {
-                              runOnUiThread(() -> reply.setText(
-                                  "JACK AI: Connection error: " +
-                                  e.getMessage()));
-                          }
+                              String finalAnswer = answer.toString();
 
-                          runOnUiThread(() -> {
-                              busy = false;
-                              send.setEnabled(true);
-                              input.requestFocus();
-                              scroll.post(() ->
-                                  scroll.fullScroll(View.FOCUS_DOWN));
-                          });
+                              runOnUiThread(() -> speak(finalAnswer));
+
+                          } catch (Exception e) {
+                              String error = e.getMessage();
+
+                              runOnUiThread(() ->
+                                  reply.setText(
+                                      "JACK AI: Connection error: " + error));
+
+                          } finally {
+                              if (connection != null) {
+                                  connection.disconnect();
+                              }
+
+                              runOnUiThread(() -> {
+                                  busy = false;
+                                  send.setEnabled(true);
+                                  input.requestFocus();
+
+                                  scroll.post(() ->
+                                      scroll.fullScroll(View.FOCUS_DOWN));
+                              });
+                          }
 
                       }).start();
 
                   } catch (Exception e) {
                       busy = false;
                       send.setEnabled(true);
+
                       addBubble("Error: " + e.getMessage(),
                           WHITE, Gravity.START);
                   }
@@ -392,6 +621,22 @@ jobs:
                       scroll.fullScroll(View.FOCUS_DOWN));
 
                   return bubble;
+              }
+
+              @Override
+              protected void onDestroy() {
+                  if (recognizer != null) {
+                      recognizer.destroy();
+                      recognizer = null;
+                  }
+
+                  if (tts != null) {
+                      tts.stop();
+                      tts.shutdown();
+                      tts = null;
+                  }
+
+                  super.onDestroy();
               }
           }
           EOF
