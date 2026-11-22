@@ -31,7 +31,9 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-
+          with:
+            accept-android-sdk-licenses: true
+            log-accepted-android-sdk-licenses: false
       - name: Create Android project
         run: |
           mkdir -p app/src/main/java/com/jackai/assistant
