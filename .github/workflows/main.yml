@@ -31,9 +31,13 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-          with:
-            accept-android-sdk-licenses: true
-            log-accepted-android-sdk-licenses: false
+        with:
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
       - name: Create Android project
         run: |
           mkdir -p app/src/main/java/com/jackai/assistant
@@ -88,13 +92,16 @@ jobs:
                   android:theme="@android:style/Theme.Material.NoActionBar"
                   android:label="JACK AI"
                   android:allowBackup="false">
+
                   <activity
                       android:name=".MainActivity"
                       android:exported="true">
+
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
+
                   </activity>
               </application>
           </manifest>
@@ -134,6 +141,7 @@ jobs:
 
                   layout.addView(title);
                   layout.addView(subtitle);
+
                   setContentView(layout);
               }
           }
@@ -147,3 +155,4 @@ jobs:
         with:
           name: JACK-AI-APK
           path: app/build/outputs/apk/debug/app-debug.apk
+
