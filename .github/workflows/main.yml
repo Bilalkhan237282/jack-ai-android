@@ -1,4 +1,3 @@
-
 name: Build JACK AI Android APK
 
 on:
@@ -79,9 +78,9 @@ jobs:
               defaultConfig {
                   applicationId = "com.jackai.assistant"
                   minSdk = 23
-                  targetSdk = 35
-                  versionCode = 7
-                  versionName = "1.6"
+                  targetSdk = 32
+                  versionCode = 8
+                  versionName = "1.7"
               }
           }
           EOF
@@ -91,35 +90,245 @@ jobs:
 
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 
-              <queries>
-                  <package android:name="com.whatsapp"/>
-                  <package android:name="com.google.android.youtube"/>
-                  <intent>
-                      <action android:name="android.speech.RecognitionService"/>
-                  </intent>
-                  <intent>
-                      <action android:name="android.intent.action.TTS_SERVICE"/>
-                  </intent>
-              </queries>
+              <queries> <package android:name="com.whatsapp"/> <package android:name="com.google.android.youtube"/> <intent> <action android:name="android.speech.RecognitionService"/> </intent> <intent> <action android:name="android.intent.action.TTS_SERVICE"/> </intent> </queries>
 
-              <application
-                  android:theme="@android:style/Theme.Material.NoActionBar"
-                  android:label="JACK AI"
-                  android:allowBackup="false">
-
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true">
-
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
-                      </intent-filter>
-
-                  </activity>
-              </application>
+              <application android:theme="@android:style/Theme.Material.NoActionBar" android:label="JACK AI" android:allowBackup="false"> <activity android:name=".MainActivity" android:exported="true"> <intent-filter> <action android:name="android.intent.action.MAIN"/> <category android:name="android.intent.category.LAUNCHER"/> </intent-filter> </activity> <service android:name=".FloatingJackService" android:exported="false"/> </application>
           </manifest>
+          EOF
+
+          cat > app/src/main/java/com/jackai/assistant/FloatingJackService.java <<'EOF'
+          package com.jackai.assistant;
+
+          import android.app.Service;
+          import android.content.Intent;
+          import android.graphics.Canvas;
+          import android.graphics.Color;
+          import android.graphics.LinearGradient;
+          import android.graphics.Paint;
+          import android.graphics.Shader;
+          import android.graphics.Typeface;
+          import android.os.IBinder;
+          import android.view.Gravity;
+          import android.view.MotionEvent;
+          import android.view.View;
+          import android.view.WindowManager;
+          import android.widget.Toast;
+
+          public class FloatingJackService extends Service {
+              public static final String ACTION_STOP =
+                  "com.jackai.assistant.STOP_FLOATING_JACK";
+
+              private WindowManager windowManager;
+              private JackFaceView faceView;
+              private WindowManager.LayoutParams params;
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+                  faceView = new JackFaceView();
+                  params = new WindowManager.LayoutParams(
+                      dp(142),
+                      dp(166),
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                          | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                      android.graphics.PixelFormat.TRANSLUCENT
+                  );
+                  params.gravity = Gravity.TOP | Gravity.END;
+                  params.x = dp(12);
+                  params.y = dp(210);
+
+                  faceView.setOnTouchListener(new View.OnTouchListener() {
+                      private int startX;
+                      private int startY;
+                      private float downX;
+                      private float downY;
+                      private boolean moved;
+
+                      @Override
+                      public boolean onTouch(View view, MotionEvent event) {
+                          switch (event.getAction()) {
+                              case MotionEvent.ACTION_DOWN:
+                                  startX = params.x;
+                                  startY = params.y;
+                                  downX = event.getRawX();
+                                  downY = event.getRawY();
+                                  moved = false;
+                                  return true;
+
+                              case MotionEvent.ACTION_MOVE:
+                                  int dx = (int) (downX - event.getRawX());
+                                  int dy = (int) (event.getRawY() - downY);
+                                  if (Math.abs(dx) > dp(5) || Math.abs(dy) > dp(5)) {
+                                      moved = true;
+                                  }
+                                  params.x = Math.max(0, startX + dx);
+                                  params.y = Math.max(0, startY + dy);
+                                  try {
+                                      windowManager.updateViewLayout(faceView, params);
+                                  } catch (Exception ignored) {}
+                                  return true;
+
+                              case MotionEvent.ACTION_UP:
+                                  if (!moved) {
+                                      Intent open = new Intent(
+                                          FloatingJackService.this,
+                                          MainActivity.class
+                                      );
+                                      open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                          | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                                      startActivity(open);
+                                      Toast.makeText(
+                                          FloatingJackService.this,
+                                          "JACK AI opened",
+                                          Toast.LENGTH_SHORT
+                                      ).show();
+                                  }
+                                  return true;
+                          }
+                          return false;
+                      }
+                  });
+
+                  try {
+                      windowManager.addView(faceView, params);
+                  } catch (Exception e) {
+                      stopSelf();
+                  }
+              }
+
+              private int dp(float value) {
+                  return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+                      stopSelf();
+                      return START_NOT_STICKY;
+                  }
+                  return START_STICKY;
+              }
+
+              @Override
+              public void onDestroy() {
+                  if (faceView != null && windowManager != null) {
+                      try {
+                          windowManager.removeView(faceView);
+                      } catch (Exception ignored) {}
+                  }
+                  faceView = null;
+                  super.onDestroy();
+              }
+
+              @Override
+              public IBinder onBind(Intent intent) {
+                  return null;
+              }
+
+              private class JackFaceView extends View {
+                  private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  private final float density =
+                      getResources().getDisplayMetrics().density;
+
+                  JackFaceView() {
+                      super(FloatingJackService.this);
+                      setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+                      post(invalidateLoop);
+                  }
+
+                  private final Runnable invalidateLoop = new Runnable() {
+                      @Override
+                      public void run() {
+                          invalidate();
+                          postDelayed(this, 70);
+                      }
+                  };
+
+                  private float d(float value) {
+                      return value * density;
+                  }
+
+                  @Override
+                  protected void onDraw(Canvas canvas) {
+                      super.onDraw(canvas);
+                      float w = getWidth();
+                      float h = getHeight();
+                      float cx = w / 2f;
+                      float t = System.currentTimeMillis() / 650.0f;
+                      float bob = (float) Math.sin(t) * d(3);
+
+                      // Soft shadow and glowing halo
+                      p.setShader(null);
+                      p.setColor(Color.argb(45, 0, 220, 255));
+                      canvas.drawCircle(cx, h * .43f + bob, d(57), p);
+                      p.setColor(Color.argb(35, 130, 70, 255));
+                      canvas.drawCircle(cx, h * .43f + bob, d(65), p);
+
+                      // Headset band
+                      p.setStyle(Paint.Style.STROKE);
+                      p.setStrokeWidth(d(7));
+                      p.setColor(Color.rgb(70, 220, 255));
+                      canvas.drawArc(cx - d(43), h * .15f + bob,
+                          cx + d(43), h * .78f + bob, 185, 170, false, p);
+                      p.setStyle(Paint.Style.FILL);
+
+                      // Face gradient
+                      p.setShader(new LinearGradient(
+                          cx - d(43), h * .24f + bob,
+                          cx + d(43), h * .70f + bob,
+                          new int[]{Color.rgb(20, 65, 125),
+                              Color.rgb(20, 28, 75),
+                              Color.rgb(80, 45, 150)},
+                          null, Shader.TileMode.CLAMP));
+                      canvas.drawRoundRect(cx - d(43), h * .22f + bob,
+                          cx + d(43), h * .72f + bob, d(30), d(30), p);
+                      p.setShader(null);
+
+                      // Face outline
+                      p.setStyle(Paint.Style.STROKE);
+                      p.setStrokeWidth(d(2));
+                      p.setColor(Color.rgb(65, 225, 255));
+                      canvas.drawRoundRect(cx - d(43), h * .22f + bob,
+                          cx + d(43), h * .72f + bob, d(30), d(30), p);
+                      p.setStyle(Paint.Style.FILL);
+
+                      // Eyes with gentle blink
+                      float blink = (System.currentTimeMillis() % 4300 < 170) ? .18f : 1f;
+                      p.setColor(Color.rgb(110, 245, 255));
+                      canvas.drawOval(cx - d(25), h * .39f + bob,
+                          cx - d(9), h * (.39f + .13f * blink) + bob, p);
+                      canvas.drawOval(cx + d(9), h * .39f + bob,
+                          cx + d(25), h * (.39f + .13f * blink) + bob, p);
+
+                      // Animated mouth
+                      p.setColor(Color.rgb(0, 225, 255));
+                      float mouth = d(3) + (float) Math.abs(Math.sin(t * 1.7)) * d(5);
+                      canvas.drawRoundRect(cx - d(13), h * .59f + bob,
+                          cx + d(13), h * .59f + bob + mouth, d(5), d(5), p);
+
+                      // Microphone ear pieces
+                      p.setColor(Color.rgb(0, 205, 255));
+                      canvas.drawRoundRect(cx - d(51), h * .43f + bob,
+                          cx - d(40), h * .64f + bob, d(6), d(6), p);
+                      canvas.drawRoundRect(cx + d(40), h * .43f + bob,
+                          cx + d(51), h * .64f + bob, d(6), d(6), p);
+
+                      // Name label
+                      p.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+                      p.setTextAlign(Paint.Align.CENTER);
+                      p.setTextSize(d(14));
+                      p.setColor(Color.WHITE);
+                      canvas.drawText("JACK AI", cx, h * .88f, p);
+                      p.setTextSize(d(9));
+                      p.setColor(Color.rgb(105, 225, 255));
+                      canvas.drawText("TAP TO OPEN", cx, h * .97f, p);
+                  }
+              }
+          }
           EOF
 
           cat > app/src/main/java/com/jackai/assistant/MainActivity.java <<'EOF'
@@ -137,6 +346,7 @@ jobs:
           import android.graphics.Typeface;
           import android.net.Uri;
           import android.provider.MediaStore;
+          import android.provider.Settings;
           import android.speech.RecognizerIntent;
           import android.speech.RecognitionListener;
           import android.speech.SpeechRecognizer;
@@ -167,7 +377,7 @@ jobs:
               LinearLayout messages;
               EditText input;
               ScrollView scroll;
-              Button send, mic, languageButton, wakeButton;
+              Button send, mic, languageButton, wakeButton, floatingButton;
 
               JSONArray history = new JSONArray();
 
@@ -213,7 +423,6 @@ jobs:
                   messages.setOrientation(LinearLayout.VERTICAL);
                   messages.setPadding(12, 12, 12, 12);
                   scroll.addView(messages);
-
                   root.addView(scroll,
                       new LinearLayout.LayoutParams(-1, 0, 1));
 
@@ -228,9 +437,7 @@ jobs:
                   input.setTextColor(WHITE);
                   input.setSingleLine(true);
                   input.setImeOptions(EditorInfo.IME_ACTION_SEND);
-                  input.setBackgroundTintList(
-                      ColorStateList.valueOf(CYAN));
-
+                  input.setBackgroundTintList(ColorStateList.valueOf(CYAN));
                   bottom.addView(input,
                       new LinearLayout.LayoutParams(0, -2, 1));
 
@@ -248,13 +455,17 @@ jobs:
                   send.setText("SEND");
                   send.setTextSize(10);
                   bottom.addView(send);
-
                   root.addView(bottom);
 
                   wakeButton = new Button(this);
                   wakeButton.setText("WAKE WORD: OFF");
                   wakeButton.setTextColor(WHITE);
                   root.addView(wakeButton);
+
+                  floatingButton = new Button(this);
+                  floatingButton.setText("FLOATING JACK: ON");
+                  floatingButton.setTextColor(WHITE);
+                  root.addView(floatingButton);
 
                   setContentView(root);
 
@@ -267,6 +478,7 @@ jobs:
                   mic.setOnClickListener(v -> startVoiceInput());
                   send.setOnClickListener(v -> sendMessage());
                   wakeButton.setOnClickListener(v -> toggleWakeWord());
+                  floatingButton.setOnClickListener(v -> toggleFloatingJack());
 
                   input.setOnEditorActionListener((v, actionId, event) -> {
                       sendMessage();
@@ -285,24 +497,40 @@ jobs:
                       WHITE, Gravity.START);
               }
 
+              void toggleFloatingJack() {
+                  if (Settings.canDrawOverlays(this)) {
+                      Intent service = new Intent(this, FloatingJackService.class);
+                      startService(service);
+                      floatingButton.setText("FLOATING JACK: ON");
+                      Toast.makeText(this,
+                          "Floating JACK is active. Tap the character to open JACK AI.",
+                          Toast.LENGTH_LONG).show();
+                  } else {
+                      Intent permission = new Intent(
+                          Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                          Uri.parse("package:" + getPackageName()));
+                      startActivity(permission);
+                      Toast.makeText(this,
+                          "Allow Display over other apps, then return and tap FLOATING JACK.",
+                          Toast.LENGTH_LONG).show();
+                  }
+              }
+
               void configureTts() {
                   if (tts == null || !ttsReady) return;
 
                   tts.setOnUtteranceProgressListener(
                       new UtteranceProgressListener() {
-                      @Override
-                      public void onStart(String id) {}
+                      @Override public void onStart(String id) {}
 
                       @Override
                       public void onDone(String id) {
                           handler.post(() -> {
                               if (isFinishing() || activityPaused) return;
-
                               if ("JACK_WAKE_GREETING".equals(id) &&
                                   wakeCommandPending) {
                                   beginListening(false);
                               }
-
                               if ("JACK_REPLY".equals(id) &&
                                   wakeCommandPending) {
                                   wakeCommandPending = false;
@@ -328,10 +556,8 @@ jobs:
 
               void setTtsLanguage() {
                   if (tts == null || !ttsReady) return;
-
                   Locale locale = english
                       ? Locale.US : new Locale("ur", "PK");
-
                   int result = tts.setLanguage(locale);
 
                   if (result == TextToSpeech.LANG_MISSING_DATA ||
@@ -349,7 +575,6 @@ jobs:
                   try {
                       Set<Voice> voices = tts.getVoices();
                       Voice best = null;
-
                       if (voices != null) {
                           for (Voice voice : voices) {
                               if (voice.getLocale().getLanguage()
@@ -362,7 +587,6 @@ jobs:
                               }
                           }
                       }
-
                       if (best != null) tts.setVoice(best);
                   } catch (Exception ignored) {}
               }
@@ -382,7 +606,6 @@ jobs:
                       String greeting = english
                           ? "Yes boss! How can I help you?"
                           : "جی باس! کیا کام ہے؟";
-
                       tts.speak(greeting, TextToSpeech.QUEUE_FLUSH,
                           null, "JACK_WAKE_GREETING");
                   } else {
@@ -408,22 +631,18 @@ jobs:
                           new String[]{Manifest.permission.RECORD_AUDIO}, 101);
                       return;
                   }
-
                   startWakeWord();
               }
 
               void startWakeWord() {
                   if (activityPaused) return;
-
                   wakeCommandPending = false;
                   wakeWordActive = true;
                   wakeButton.setText("WAKE WORD: ON");
                   mic.setText("WAKE...");
-
                   Toast.makeText(this,
-                      "JACK is listening for Hey JACK",
+                      "Listening for Hey JACK while this app is open",
                       Toast.LENGTH_SHORT).show();
-
                   beginListening(true);
               }
 
@@ -432,8 +651,6 @@ jobs:
                   wakeCommandPending = false;
                   wakeButton.setText("WAKE WORD: OFF");
                   mic.setText("MIC");
-                  handler.removeCallbacksAndMessages(null);
-
                   if (recognizer != null) {
                       try {
                           recognizer.cancel();
@@ -446,21 +663,16 @@ jobs:
               void restartWakeWord() {
                   if (!wakeWordActive || isFinishing() ||
                       activityPaused) return;
-
                   handler.postDelayed(() -> {
                       if (wakeWordActive && !activityPaused &&
-                          !isFinishing()) {
-                          beginListening(true);
-                      }
+                          !isFinishing()) beginListening(true);
                   }, 900);
               }
 
               @Override
-              public void onRequestPermissionsResult(
-                  int requestCode, String[] permissions, int[] grantResults) {
+              public void onRequestPermissionsResult( int requestCode, String[] permissions, int[] grantResults) {
                   super.onRequestPermissionsResult(
                       requestCode, permissions, grantResults);
-
                   if (requestCode == 101 && grantResults.length > 0 &&
                       grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                       startWakeWord();
@@ -478,7 +690,6 @@ jobs:
                           new String[]{Manifest.permission.RECORD_AUDIO}, 101);
                       return;
                   }
-
                   if (wakeWordActive) stopWakeWord();
                   wakeCommandPending = false;
                   beginListening(false);
@@ -486,7 +697,6 @@ jobs:
 
               void beginListening(boolean wakeSession) {
                   if (isFinishing() || activityPaused) return;
-
                   if (!SpeechRecognizer.isRecognitionAvailable(this)) {
                       if (wakeSession) stopWakeWord();
                       Toast.makeText(this,
@@ -500,25 +710,19 @@ jobs:
                           recognizer.cancel();
                           recognizer.destroy();
                       }
-
-                      recognizer =
-                          SpeechRecognizer.createSpeechRecognizer(this);
-
+                      recognizer = SpeechRecognizer.createSpeechRecognizer(this);
                       recognizer.setRecognitionListener(
                           new RecognitionListener() {
                           @Override
                           public void onReadyForSpeech(Bundle params) {
                               mic.setText(wakeSession ? "WAKE..." : "LISTENING");
                           }
-
                           @Override public void onBeginningOfSpeech() {}
                           @Override public void onRmsChanged(float rmsdB) {}
                           @Override public void onBufferReceived(byte[] b) {}
                           @Override public void onPartialResults(Bundle b) {}
                           @Override public void onEvent(int e, Bundle b) {}
-
-                          @Override
-                          public void onEndOfSpeech() {
+                          @Override public void onEndOfSpeech() {
                               if (!wakeWordActive) mic.setText("MIC");
                           }
 
@@ -545,39 +749,32 @@ jobs:
                                   if (wakeSession) restartWakeWord();
                                   return;
                               }
-
                               java.util.ArrayList<String> matches =
                                   results.getStringArrayList(
                                       SpeechRecognizer.RESULTS_RECOGNITION);
-
                               if (matches == null || matches.isEmpty()) {
                                   if (wakeSession) restartWakeWord();
                                   return;
                               }
 
                               String spoken = matches.get(0);
-
                               if (wakeSession) {
                                   String normalized = spoken
                                       .toLowerCase(Locale.ROOT)
                                       .replaceAll("[^a-z ]", " ")
                                       .replaceAll("\\s+", " ")
                                       .trim();
-
                                   int index = normalized.indexOf("hey jack");
                                   if (index < 0) {
                                       index = normalized.indexOf("heyjack");
                                   }
-
                                   if (index >= 0) {
                                       wakeWordActive = false;
                                       wakeButton.setText("WAKE WORD: OFF");
                                       wakeCommandPending = true;
-
                                       String command = normalized
                                           .replaceFirst("hey\\s*jack", "")
                                           .trim();
-
                                       if (!command.isEmpty()) {
                                           handleVoiceCommand(command);
                                       } else {
@@ -595,23 +792,18 @@ jobs:
 
                       Intent intent = new Intent(
                           RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-
                       intent.putExtra(
                           RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                           RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-
                       String lang = wakeSession
                           ? "en-US" : (english ? "en-US" : "ur-PK");
-
                       intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang);
                       intent.putExtra(
                           RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang);
                       intent.putExtra(
                           RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
                       intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
-
                       recognizer.startListening(intent);
-
                   } catch (Exception e) {
                       if (wakeSession) restartWakeWord();
                       else if (wakeCommandPending) {
@@ -624,30 +816,23 @@ jobs:
               void handleVoiceCommand(String command) {
                   String text = command == null ? "" :
                       command.toLowerCase(Locale.ROOT).trim();
-
                   if (text.isEmpty()) {
                       if (wakeCommandPending) speakWakeGreeting();
                       return;
                   }
-
                   if (openPhoneFeature(text)) return;
-
                   input.setText(command);
                   sendMessage();
               }
 
               boolean openPhoneFeature(String command) {
                   String c = command.toLowerCase(Locale.ROOT);
-
                   boolean youtube =
                       c.contains("youtube") || c.contains("you tube");
-
                   boolean whatsapp =
                       c.contains("whatsapp") || c.contains("whats app");
-
                   boolean camera =
                       c.contains("camera") || c.contains("take a photo");
-
                   boolean settings =
                       c.contains("settings") || c.contains("phone setting");
 
@@ -657,44 +842,32 @@ jobs:
 
                   try {
                       Intent intent;
-
                       if (youtube) {
-                          intent = getPackageManager()
-                              .getLaunchIntentForPackage(
-                                  "com.google.android.youtube");
-
+                          intent = getPackageManager().getLaunchIntentForPackage(
+                              "com.google.android.youtube");
                           if (intent == null) {
                               intent = new Intent(Intent.ACTION_VIEW,
                                   Uri.parse("https://www.youtube.com"));
                           }
-
                           speak("Opening YouTube.");
-
                       } else if (whatsapp) {
-                          intent = getPackageManager()
-                              .getLaunchIntentForPackage("com.whatsapp");
-
+                          intent = getPackageManager().getLaunchIntentForPackage(
+                              "com.whatsapp");
                           if (intent == null) {
                               intent = new Intent(Intent.ACTION_VIEW,
                                   Uri.parse("https://www.whatsapp.com"));
                           }
-
                           speak("Opening WhatsApp.");
-
                       } else if (camera) {
                           intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
                           speak("Opening camera.");
-
                       } else {
-                          intent = new Intent(
-                              android.provider.Settings.ACTION_SETTINGS);
+                          intent = new Intent(Settings.ACTION_SETTINGS);
                           speak("Opening settings.");
                       }
 
-                      // FIX: final variable for lambda use
                       final Intent launchIntent = intent;
                       launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
                       handler.postDelayed(() -> {
                           try {
                               startActivity(launchIntent);
@@ -704,23 +877,19 @@ jobs:
                                   Toast.LENGTH_SHORT).show();
                           }
                       }, 1000);
-
                   } catch (Exception e) {
                       speak("Sorry, I could not open that app.");
                   }
-
                   return true;
               }
 
               void sendMessage() {
                   String question = input.getText().toString().trim();
-
                   if (question.isEmpty() || busy) return;
 
                   busy = true;
                   send.setEnabled(false);
                   input.setText("");
-
                   addBubble("You: " + question, CYAN, Gravity.END);
 
                   try {
@@ -728,17 +897,14 @@ jobs:
                       userMessage.put("role", "user");
                       userMessage.put("content", question);
                       history.put(userMessage);
-
                       JSONArray requestHistory =
                           new JSONArray(history.toString());
-
                       TextView reply = addBubble(
                           "JACK AI: ", WHITE, Gravity.START);
 
                       new Thread(() -> {
                           StringBuilder answer = new StringBuilder();
                           HttpURLConnection connection = null;
-
                           try {
                               JSONObject body = new JSONObject();
                               body.put("messages", requestHistory);
@@ -751,9 +917,7 @@ jobs:
                                   english ? "en" : "ur");
 
                               URL url = new URL(API_URL);
-                              connection =
-                                  (HttpURLConnection) url.openConnection();
-
+                              connection = (HttpURLConnection) url.openConnection();
                               connection.setRequestMethod("POST");
                               connection.setConnectTimeout(20000);
                               connection.setReadTimeout(90000);
@@ -763,21 +927,17 @@ jobs:
                               connection.setRequestProperty(
                                   "Accept", "text/event-stream");
 
-                              byte[] data =
-                                  body.toString().getBytes("UTF-8");
-
+                              byte[] data = body.toString().getBytes("UTF-8");
                               try (OutputStream output =
                                   connection.getOutputStream()) {
                                   output.write(data);
                               }
 
                               int status = connection.getResponseCode();
-
                               if (status != 200) {
                                   InputStream es = connection.getErrorStream();
                                   StringBuilder error =
                                       new StringBuilder("HTTP " + status);
-
                                   if (es != null) {
                                       BufferedReader er = new BufferedReader(
                                           new InputStreamReader(es, "UTF-8"));
@@ -786,47 +946,33 @@ jobs:
                                           error.append(el);
                                       }
                                   }
-
                                   throw new Exception(error.toString());
                               }
 
                               try (BufferedReader reader =
                                   new BufferedReader(new InputStreamReader(
                                       connection.getInputStream(), "UTF-8"))) {
-
                                   String line;
                                   boolean completed = false;
-
                                   while ((line = reader.readLine()) != null) {
                                       if (!line.startsWith("data:")) continue;
-
                                       String jsonText =
                                           line.substring(5).trim();
-
                                       if (jsonText.isEmpty()) continue;
-
-                                      JSONObject event =
-                                          new JSONObject(jsonText);
-
+                                      JSONObject event = new JSONObject(jsonText);
                                       String type = event.optString("type");
-
                                       if ("delta".equals(type)) {
                                           answer.append(event.optString("text"));
                                           String current = answer.toString();
-
                                           runOnUiThread(() ->
                                               reply.setText("JACK AI: " + current));
                                       }
-
                                       if ("error".equals(type)) {
-                                          throw new Exception(
-                                              event.optString("message",
-                                                  "AI response failed"));
+                                          throw new Exception(event.optString(
+                                              "message", "AI response failed"));
                                       }
-
                                       if ("done".equals(type)) completed = true;
                                   }
-
                                   if (!completed || answer.length() == 0) {
                                       throw new Exception(
                                           "AI response was incomplete.");
@@ -837,37 +983,30 @@ jobs:
                               assistantMessage.put("role", "assistant");
                               assistantMessage.put("content", answer.toString());
                               history.put(assistantMessage);
-
                               String finalAnswer = answer.toString();
                               runOnUiThread(() -> speak(finalAnswer));
 
                           } catch (Exception e) {
                               String error = e.getMessage();
-
                               runOnUiThread(() -> {
                                   reply.setText("JACK AI: Connection error: " +
                                       error);
-
                                   if (wakeCommandPending) {
                                       wakeCommandPending = false;
                                       restartWakeWord();
                                   }
                               });
-
                           } finally {
                               if (connection != null) connection.disconnect();
-
                               runOnUiThread(() -> {
                                   busy = false;
                                   send.setEnabled(true);
                                   input.requestFocus();
-
                                   scroll.post(() ->
                                       scroll.fullScroll(View.FOCUS_DOWN));
                               });
                           }
                       }).start();
-
                   } catch (Exception e) {
                       busy = false;
                       send.setEnabled(true);
@@ -882,17 +1021,12 @@ jobs:
                   bubble.setTextColor(color);
                   bubble.setTextSize(16);
                   bubble.setPadding(14, 12, 14, 12);
-
                   LinearLayout.LayoutParams params =
                       new LinearLayout.LayoutParams(-2, -2);
                   params.gravity = gravity;
                   params.setMargins(4, 8, 4, 8);
-
                   messages.addView(bubble, params);
-
-                  scroll.post(() ->
-                      scroll.fullScroll(View.FOCUS_DOWN));
-
+                  scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
                   return bubble;
               }
 
@@ -900,7 +1034,6 @@ jobs:
               protected void onPause() {
                   super.onPause();
                   activityPaused = true;
-
                   if (wakeWordActive) stopWakeWord();
               }
 
@@ -913,7 +1046,6 @@ jobs:
               @Override
               protected void onDestroy() {
                   handler.removeCallbacksAndMessages(null);
-
                   if (recognizer != null) {
                       try {
                           recognizer.cancel();
@@ -921,13 +1053,11 @@ jobs:
                       } catch (Exception ignored) {}
                       recognizer = null;
                   }
-
                   if (tts != null) {
                       tts.stop();
                       tts.shutdown();
                       tts = null;
                   }
-
                   super.onDestroy();
               }
           }
