@@ -626,9 +626,7 @@ jobs:
                       command.toLowerCase(Locale.ROOT).trim();
 
                   if (text.isEmpty()) {
-                      if (wakeCommandPending) {
-                          speakWakeGreeting();
-                      }
+                      if (wakeCommandPending) speakWakeGreeting();
                       return;
                   }
 
@@ -679,7 +677,6 @@ jobs:
                           if (intent == null) {
                               intent = new Intent(Intent.ACTION_VIEW,
                                   Uri.parse("https://www.whatsapp.com"));
-
                           }
 
                           speak("Opening WhatsApp.");
@@ -694,11 +691,13 @@ jobs:
                           speak("Opening settings.");
                       }
 
-                      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                      // FIX: final variable for lambda use
+                      final Intent launchIntent = intent;
+                      launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
                       handler.postDelayed(() -> {
                           try {
-                              startActivity(intent);
+                              startActivity(launchIntent);
                           } catch (Exception e) {
                               Toast.makeText(this,
                                   "Could not open this app.",
@@ -787,6 +786,7 @@ jobs:
                                           error.append(el);
                                       }
                                   }
+
                                   throw new Exception(error.toString());
                               }
 
@@ -802,6 +802,7 @@ jobs:
 
                                       String jsonText =
                                           line.substring(5).trim();
+
                                       if (jsonText.isEmpty()) continue;
 
                                       JSONObject event =
@@ -812,6 +813,7 @@ jobs:
                                       if ("delta".equals(type)) {
                                           answer.append(event.optString("text"));
                                           String current = answer.toString();
+
                                           runOnUiThread(() ->
                                               reply.setText("JACK AI: " + current));
                                       }
@@ -841,6 +843,7 @@ jobs:
 
                           } catch (Exception e) {
                               String error = e.getMessage();
+
                               runOnUiThread(() -> {
                                   reply.setText("JACK AI: Connection error: " +
                                       error);
@@ -858,6 +861,7 @@ jobs:
                                   busy = false;
                                   send.setEnabled(true);
                                   input.requestFocus();
+
                                   scroll.post(() ->
                                       scroll.fullScroll(View.FOCUS_DOWN));
                               });
@@ -867,7 +871,8 @@ jobs:
                   } catch (Exception e) {
                       busy = false;
                       send.setEnabled(true);
-                      addBubble("Error: " + e.getMessage(), WHITE, Gravity.START);
+                      addBubble("Error: " + e.getMessage(),
+                          WHITE, Gravity.START);
                   }
               }
 
@@ -884,6 +889,7 @@ jobs:
                   params.setMargins(4, 8, 4, 8);
 
                   messages.addView(bubble, params);
+
                   scroll.post(() ->
                       scroll.fullScroll(View.FOCUS_DOWN));
 
