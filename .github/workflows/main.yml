@@ -83,13 +83,13 @@ jobs:
                   applicationId = "com.jackai.assistant"
                   minSdk = 23
                   targetSdk = 32
-                  versionCode = 10
-                  versionName = "2.0"
+                  versionCode = 11
+                  versionName = "2.1"
               }
           }
 
           dependencies {
-              implementation(platform("com.google.firebase:firebase-bom:34.0.0"))
+              implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
               implementation("com.google.firebase:firebase-auth")
           }
           EOF
@@ -493,6 +493,8 @@ jobs:
           import android.content.res.ColorStateList;
           import android.graphics.Color;
           import android.graphics.Typeface;
+          import android.graphics.Bitmap;
+          import android.graphics.BitmapFactory;
           import android.net.Uri;
           import android.provider.MediaStore;
           import android.provider.Settings;
@@ -519,8 +521,10 @@ jobs:
 
               final String API_URL =
                   "https://jack-ai-1.ai.studio/api/chat/stream";
-              final String IMAGE_API_URL =
+              final String IMAGE_WORKER_URL =
                   "https://jack-ai-android.devilxd302777.workers.dev/generate";
+
+              FirebaseAuth firebaseAuth;
 
               final int BG = Color.rgb(8, 15, 35);
               final int CYAN = Color.rgb(0, 220, 255);
@@ -548,6 +552,8 @@ jobs:
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
+
+                  firebaseAuth = FirebaseAuth.getInstance();
 
                   LinearLayout root = new LinearLayout(this);
                   root.setOrientation(LinearLayout.VERTICAL);
@@ -697,109 +703,149 @@ jobs:
                   prompt.setHintTextColor(Color.LTGRAY);
                   prompt.setMinLines(2);
                   prompt.setPadding(22, 16, 22, 16);
+
                   new android.app.AlertDialog.Builder(this)
                       .setTitle("JACK AI Image Generator")
-                      .setMessage("Apna image prompt likho. Firebase anonymous login ke zariye request authenticate hogi.")
+                      .setMessage("Apna image prompt likho. Image JACK AI ke andar generate hogi.")
                       .setView(prompt)
                       .setNegativeButton("CANCEL", (dialog, which) -> dialog.dismiss())
-                      .setPositiveButton("GENERATE IMAGE", (dialog, which) -> {
-                          String text = prompt.getText().toString().trim();
-                          if (text.isEmpty() || text.length() > 1000) {
-                              Toast.makeText(this, "Prompt 1 se 1000 characters ka hona chahiye.", Toast.LENGTH_LONG).show();
+                      .setPositiveButton("GENERATE", (dialog, which) -> {
+                          String imagePrompt = prompt.getText().toString().trim();
+                          if (imagePrompt.isEmpty()) {
+                              Toast.makeText(this, "Pehle image ka prompt likho.",
+                                  Toast.LENGTH_SHORT).show();
                               return;
                           }
-                          generateImage(text);
+                          if (imagePrompt.length() > 1000) {
+                              Toast.makeText(this, "Prompt 1000 characters se chhota rakho.",
+                                  Toast.LENGTH_LONG).show();
+                              return;
+                          }
+                          generateImage(imagePrompt);
                       }).show();
               }
 
-              void generateImage(String prompt) {
-                  android.app.ProgressDialog progress = new android.app.ProgressDialog(this);
-                  progress.setMessage("JACK AI image bana raha hai...");
-                  progress.setCancelable(false);
-                  progress.show();
+              void generateImage(String imagePrompt) {
+                  Toast.makeText(this, "JACK AI image generate kar raha hai...",
+                      Toast.LENGTH_LONG).show();
 
-                  FirebaseAuth auth = FirebaseAuth.getInstance();
-                  auth.signInAnonymously()
-                      .addOnSuccessListener(result -> {
-                          if (result.getUser() == null) {
-                              progress.dismiss();
-                              Toast.makeText(this, "Firebase login nahi ho saka.", Toast.LENGTH_LONG).show();
+                  if (firebaseAuth.getCurrentUser() == null) {
+                      firebaseAuth.signInAnonymously().addOnCompleteListener(this, signInTask -> {
+                          if (!signInTask.isSuccessful()) {
+                              String message = signInTask.getException() == null
+                                  ? "Firebase login failed."
+                                  : signInTask.getException().getMessage();
+                              Toast.makeText(this, "Login error: " + message,
+                                  Toast.LENGTH_LONG).show();
                               return;
                           }
-                          result.getUser().getIdToken(false)
-                              .addOnSuccessListener(tokenResult -> {
-                                  String idToken = tokenResult.getToken();
-                                  if (idToken == null || idToken.isEmpty()) {
-                                      progress.dismiss();
-                                      Toast.makeText(this, "Firebase token nahi mila.", Toast.LENGTH_LONG).show();
-                                      return;
-                                  }
-                                  new Thread(() -> {
-                                      HttpURLConnection connection = null;
-                                      try {
-                                          JSONObject body = new JSONObject();
-                                          body.put("prompt", prompt);
-                                          URL url = new URL(IMAGE_API_URL);
-                                          connection = (HttpURLConnection) url.openConnection();
-                                          connection.setRequestMethod("POST");
-                                          connection.setConnectTimeout(20000);
-                                          connection.setReadTimeout(120000);
-                                          connection.setDoOutput(true);
-                                          connection.setRequestProperty("Content-Type", "application/json");
-                                          connection.setRequestProperty("Authorization", "Bearer " + idToken);
-                                          byte[] data = body.toString().getBytes("UTF-8");
-                                          try (OutputStream output = connection.getOutputStream()) {
-                                              output.write(data);
-                                          }
-                                          int status = connection.getResponseCode();
-                                          if (status != 200) {
-                                              InputStream errorStream = connection.getErrorStream();
-                                              StringBuilder error = new StringBuilder("Image service HTTP " + status);
-                                              if (errorStream != null) {
-                                                  BufferedReader reader = new BufferedReader(new InputStreamReader(errorStream, "UTF-8"));
-                                                  String line;
-                                                  while ((line = reader.readLine()) != null) error.append(" ").append(line);
-                                                  reader.close();
-                                              }
-                                              throw new Exception(error.toString());
-                                          }
-                                          android.graphics.Bitmap bitmap;
-                                          try (InputStream stream = connection.getInputStream()) {
-                                              bitmap = android.graphics.BitmapFactory.decodeStream(stream);
-                                          }
-                                          if (bitmap == null) throw new Exception("Image data decode nahi hui.");
-                                          runOnUiThread(() -> {
-                                              progress.dismiss();
-                                              ImageView imageView = new ImageView(this);
-                                              imageView.setImageBitmap(bitmap);
-                                              imageView.setAdjustViewBounds(true);
-                                              imageView.setMaxHeight(900);
-                                              new android.app.AlertDialog.Builder(this)
-                                                  .setTitle("JACK AI Generated Image")
-                                                  .setView(imageView)
-                                                  .setPositiveButton("CLOSE", (d, w) -> d.dismiss())
-                                                  .show();
-                                          });
-                                      } catch (Exception e) {
-                                          String message = e.getMessage() == null ? "Image generation failed" : e.getMessage();
-                                          runOnUiThread(() -> {
-                                              progress.dismiss();
-                                              Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-                                          });
-                                      } finally {
-                                          if (connection != null) connection.disconnect();
-                                      }
-                                  }).start();
-                              })
-                              .addOnFailureListener(error -> {
-                                  progress.dismiss();
-                                  Toast.makeText(this, "Firebase token error: " + error.getMessage(), Toast.LENGTH_LONG).show();
-                              });
-                      })
-                      .addOnFailureListener(error -> {
-                          progress.dismiss();
-                          Toast.makeText(this, "Anonymous login error: " + error.getMessage(), Toast.LENGTH_LONG).show();
+                          requestImageTokenAndGenerate(imagePrompt);
                       });
+                  } else {
+                      requestImageTokenAndGenerate(imagePrompt);
+                  }
+              }
+
+              void requestImageTokenAndGenerate(String imagePrompt) {
+                  if (firebaseAuth.getCurrentUser() == null) {
+                      Toast.makeText(this, "Firebase login required. Try again.",
+                          Toast.LENGTH_LONG).show();
+                      return;
+                  }
+
+                  firebaseAuth.getCurrentUser().getIdToken(true)
+                      .addOnCompleteListener(this, tokenTask -> {
+                          if (!tokenTask.isSuccessful() || tokenTask.getResult() == null) {
+                              String message = tokenTask.getException() == null
+                                  ? "Could not get Firebase login token."
+                                  : tokenTask.getException().getMessage();
+                              Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+                              return;
+                          }
+                          String idToken = tokenTask.getResult().getToken();
+                          if (idToken == null || idToken.isEmpty()) {
+                              Toast.makeText(this, "Firebase token missing.",
+                                  Toast.LENGTH_LONG).show();
+                              return;
+                          }
+                          new Thread(() -> performImageRequest(imagePrompt, idToken)).start();
+                      });
+              }
+
+              void performImageRequest(String imagePrompt, String idToken) {
+                  HttpURLConnection connection = null;
+                  try {
+                      JSONObject body = new JSONObject();
+                      body.put("prompt", imagePrompt);
+
+                      URL url = new URL(IMAGE_WORKER_URL);
+                      connection = (HttpURLConnection) url.openConnection();
+                      connection.setRequestMethod("POST");
+                      connection.setConnectTimeout(20000);
+                      connection.setReadTimeout(120000);
+                      connection.setDoOutput(true);
+                      connection.setRequestProperty("Content-Type", "application/json");
+                      connection.setRequestProperty("Authorization", "Bearer " + idToken);
+
+                      try (OutputStream output = connection.getOutputStream()) {
+                          output.write(body.toString().getBytes("UTF-8"));
+                      }
+
+                      int status = connection.getResponseCode();
+                      if (status != 200) {
+                          InputStream errorStream = connection.getErrorStream();
+                          StringBuilder errorText = new StringBuilder("Image request failed: HTTP ")
+                              .append(status);
+                          if (errorStream != null) {
+                              try (BufferedReader reader = new BufferedReader(
+                                      new InputStreamReader(errorStream, "UTF-8"))) {
+                                  String line;
+                                  while ((line = reader.readLine()) != null) {
+                                      errorText.append("\\n").append(line);
+                                  }
+                              }
+                          }
+                          throw new IOException(errorText.toString());
+                      }
+
+                      Bitmap bitmap;
+                      try (InputStream inputStream = connection.getInputStream()) {
+                          bitmap = BitmapFactory.decodeStream(inputStream);
+                      }
+                      if (bitmap == null) {
+                          throw new IOException("Worker response image could not be decoded.");
+                      }
+
+                      runOnUiThread(() -> {
+                          TextView heading = new TextView(this);
+                          heading.setText("JACK AI: Generated image");
+                          heading.setTextColor(CYAN);
+                          heading.setTextSize(16);
+                          heading.setPadding(4, 12, 4, 6);
+                          messages.addView(heading);
+
+                          ImageView imageView = new ImageView(this);
+                          imageView.setImageBitmap(bitmap);
+                          imageView.setAdjustViewBounds(true);
+                          imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                          imageView.setMaxHeight((int) (520 * getResources()
+                              .getDisplayMetrics().density));
+                          LinearLayout.LayoutParams imageParams =
+                              new LinearLayout.LayoutParams(-1, -2);
+                          imageParams.setMargins(4, 4, 4, 16);
+                          messages.addView(imageView, imageParams);
+                          scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+                          Toast.makeText(this, "Image ready!", Toast.LENGTH_SHORT).show();
+                      });
+                  } catch (Exception e) {
+                      String message = e.getMessage() == null
+                          ? "Unknown image generation error."
+                          : e.getMessage();
+                      runOnUiThread(() -> Toast.makeText(this, message,
+                          Toast.LENGTH_LONG).show());
+                  } finally {
+                      if (connection != null) connection.disconnect();
+                  }
               }
 
               void configureTts() {
@@ -1383,6 +1429,13 @@ jobs:
               }
           }
           EOF
+
+      - name: Verify Firebase configuration
+        run: |
+          if [ ! -f app/google-services.json ]; then
+            echo "::error::app/google-services.json is missing. Add your Firebase Android config to the app folder in the repository."
+            exit 1
+          fi
 
       - name: Build APK
         run: gradle assembleDebug
